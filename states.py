@@ -289,9 +289,9 @@ class WaitForAggregationState(AppState):
     def run(self) -> str or None:
         try:
             self.log("[CLIENT] Wait for aggregation")
-            global_model = self.await_data()
-            self.store('global_model', global_model)
-            self.log(f'global_model {global_model}')
+            #global_model = self.await_data()
+            #self.store('global_model', global_model)
+            #self.log(f'global_model {global_model}')
 
             self.log("[CLIENT] Received global model from coordinator.")
 
@@ -358,8 +358,8 @@ class ComputeGlobalModelState(AppState):
         for i in range(n_estimators):
             self.log('Predicting data...')
 
-            global_model = self.load('global_model')
-            #global_model = self.await_data()
+            #global_model = self.load('global_model')
+            global_model = self.await_data()
             self.log(f'global_model {global_model}')
             X_train = self.load('X_train')
             y_train = self.load('Y_train')
@@ -427,16 +427,6 @@ class UpdateLocalModelState(AppState):
                                                             lfadv=gradient_adv_from_adversarial,
                                                             update=update,
                                                             i=i)
-            #y_pred2, y_predi, score = local_classifier.update_classifier(X_train.values, y_train.values, sensitive, LAMBDA=0.15,
-                                                       #     Xtest=X_test.values, yt=y_test, sensitivet=sensitivet,
-                                                        #    y_pred=y_pred,
-                                                       #     y_predt=y_predt,
-                                                       #     lfadv=gradient_adv_from_adversarial,
-                                                        #    update=update,
-                                                        #    i=i)
-            # y_pred += np.multiply(learning_rate, update)  # (E) oder (F) Aktualisierung Modell
-            # y_fin = 1 / (1 + np.exp(-y_pred))  # new predicted probabilty
-
             self.store('y_pred2', result_classifier_i['y_pred2'])
             self.store('y_pred', result_classifier_i['y_pred'])
             y_pred = self.load('y_pred')
@@ -499,10 +489,10 @@ class ComputeLocalAdversarialState(AppState):
                 self.store('b1', updated_bias)
                 print(f'updated weight {updated_weight}, updated bias {updated_bias}')
 
-                data_to_broadcast.append(updated_weight)
-                data_to_broadcast.append(updated_bias)
-                self.send_data_to_coordinator(data_to_broadcast, use_smpc=self.load('smpc_used'), memo='adv')
-                print(f'data_to broadcast {data_to_broadcast}')
+                data_to_broadcast.append([updated_weight, updated_bias])
+
+                self.send_data_to_coordinator(data_to_broadcast)
+                print(f'data_to broadcast {updated_weight, updated_bias}')
 
                 if self.is_coordinator:
                     return AGGREGATE_ADV_STATE
@@ -517,7 +507,7 @@ class ComputeLocalAdversarialState(AppState):
 class AggregateAdversarialState(AppState):
 
     def register(self):
-        #self.register_transition(UPDATE_LOCAL_ADV_STATE)
+        self.register_transition(UPDATE_LOCAL_ADV_STATE)
         self.register_transition(WRITE_STATE)
         self.register_transition(TERMINAL_STATE)
 
@@ -526,32 +516,44 @@ class AggregateAdversarialState(AppState):
         #   globalen Score (Accuracy und prule) berechnen
         #   Broadcast glob. Modell an Clients (COMPUTE)
         #   Broadcast glob. Modell an COMPUTEADV
-        self.data_incoming = []
+
         n_estimators = self.load('n_estimators')
         for i in range(n_estimators):
             print('#####################################################################')
             print(i)
             self.log("[CLIENT] Global computation of adversarial weight and biases")
-
-            updated_weights = self.gather_data(memo='adv')  # 0 sind die Decison Trees, 1 die weights -> besser lösen!
-            print(f'updated_weight, updated_bias {updated_weights}')
+            self.log(f'self')
+            updated_weight = self.gather_data()
+            print(f'updated_weight, updated_bias {updated_weight}')
             data_to_broadcast = []
-            global_adversial = []
-            print(f'global_adversial {global_adversial}')
+            # global_adversial = []
+            # Extrahiere und aggregiere die ersten Werte (Gewichte)
+            weights_aggregated = [item[0][0] for item in updated_weight]
+            weights_aggregated = np.concatenate(weights_aggregated, axis=0)
 
-            #for local_adversarial in adversarial_data:
-             #   global_adversial.append(local_adversarial)
-              #  print(f'global_adversial {global_adversial}')
-            #self.store('global_adversial', global_adversial)
-            #self.log(f'global_adversial {global_adversial}')
+            # Extrahiere und aggregiere die zweiten Werte (Versatzwerte)
+            biases_aggregated = [item[0][1] for item in updated_weight]
+            biases_aggregated = np.concatenate(biases_aggregated, axis=0)
 
+            print("Aggregierte Gewichte:", weights_aggregated)
+            print("Aggregierte Versatzwerte:", biases_aggregated)
+
+            # Berechne den Mittelwert der aggregierten Gewichte
+            mean_weight = np.mean(weights_aggregated)
+
+            # Berechne den Mittelwert der aggregierten Versatzwerte
+            mean_bias = np.mean(biases_aggregated)
+
+            print("Mittelwert der aggregierten Gewichte:", mean_weight)
+            print("Mittelwert der aggregierten Versatzwerte:", mean_bias)
+
+            data_to_broadcast.append([mean_weight, mean_bias])
             done = self.load('iteration') >= self.load('max_iterations')
-            #data_to_broadcast.append(global_model)
-
-            #self.broadcast_data(global_adversial) # data_to_broadcast
+            self.broadcast_data(data_to_broadcast)
+            print(f'data_to_broadcast {data_to_broadcast}')
             self.log(f'[CLIENT] Broadcasting computation data to clients')
 
-            return TERMINAL_STATE
+            return UPDATE_LOCAL_ADV_STATE
 
 
 @app_state(WAIT_FOR_AGGREGATION_ADV_STATE)
@@ -563,13 +565,14 @@ class WaitForAggregationAdversarialState(AppState):
     def register(self):
         self.register_transition(COMPUTE_GLOBAL_MODEL_STATE, Role.PARTICIPANT)
         self.register_transition(WAIT_FOR_AGGREGATION_STATE, Role.PARTICIPANT)
+        self.register_transition(UPDATE_LOCAL_ADV_STATE, Role.PARTICIPANT)
 
     def run(self) -> str or None:
         try:
             self.log("[CLIENT] Wait for aggregation")
-            global_model = self.await_data()
-            self.store('global_model', global_model)
-            self.log(f'global_model {global_model}')
+            #global_adv_model = self.await_data()
+            #self.store('global_model', global_adv_model)
+            #self.log(f'global_model {global_adv_model}')
 
             self.log("[CLIENT] Received global model from coordinator.")
 
@@ -577,13 +580,14 @@ class WaitForAggregationAdversarialState(AppState):
 
             # print(done)
             # aggregated_result = aggregate_classifier_outputs(classifier_outputs)
-            return TERMINAL_STATE
+            return UPDATE_LOCAL_ADV_STATE
 
         except Exception as e:
             self.log('error wait for aggregation', LogLevel.ERROR)
             self.update(message='error wait for aggregation', state=State.ERROR)
             print(e)
             return WAIT_FOR_AGGREGATION_ADV_STATE
+
 
 @app_state(UPDATE_LOCAL_ADV_STATE)
 class UpdateLocalAdversarialState(AppState):
@@ -595,23 +599,13 @@ class UpdateLocalAdversarialState(AppState):
     def run(self):
         #   Anpassen Angreifer-Klassifikator an neue glob. Modell
         #   Broadcast an Clients (COMPUTE)
-        graph = self.load('graph')
-        X_input = self.load('X_input')
-        y_input = self.load('y_input')
-        sigm = self.load('sigm')
-        logit = self.load('logit')
-        loss = self.load('loss')
-        train_steps = self.load('train_steps')
-        sigm2 = self.load('sigm2')
-        init_var = self.load('init_var')
-        pred = self.load('pred')
-        acc = self.load('acc')
-        init_var = self.load('init_var')
-        var_grad = self.load('var_grad')
+
+        mean_weight_bias = self.await_data()
+        self.log(f'global_model {mean_weight_bias}')
+
         W1 = self.load('W1')
         b1 = self.load('b1')
         sess = self.load('sess')
-        saver = self.load('saver')
 
         sensitive = self.load('sensitive')
         y_pred = self.load('y_pred')
@@ -627,32 +621,13 @@ class UpdateLocalAdversarialState(AppState):
             # Initialize the classifier
             if i == 0:
                 # Fit adversarial for i = 0
-                self.log(f'sess {sess}, graph {graph}, X_input {X_input}, y_input {y_input}, sigm2 {sigm2}, var_grad {var_grad}, train_steps {train_steps}, y_pred {y_pred}, sensitive {sensitive}')
-                # result_adversarial_i = local_classifier.fit_adversial(sess, graph, X_input, y_input, sigm2, var_grad,
-                                                                # train_steps, y_pred, sensitive)
-                result_adversarial_i = local_classifier.update_adversial(sess, graph, X_input, y_input, sigm2, var_grad,
-                                                                train_steps, y_pred, sensitive, W1, b1)
-                # gradient_adv_from_adversarial = result_adversarial_i['sess']
-                updated_weight = result_adversarial_i['W1']
-                updated_bias = result_adversarial_i['b1']
-                # print(f'gradient_adv_from_adversarial {gradient_adv_from_adversarial}')
-                #self.log(f'result {gradient_adv_from_adversarial}')
-                #gradient_adv_from_adversarial = tf.saved_model.save(gradient_adv_from_adversarial)
-                #serialized_model = tf.io.serialize_tensor(gradient_adv_from_adversarial)
-                #stored_model = serialized_model.numpy()
-                self.store('W1', updated_weight)
-                self.store('b1', updated_bias)
-                print(f'updated weight {updated_weight}, updated bias {updated_bias}')
-
-                self.send_data_to_coordinator([updated_weight, updated_bias], use_smpc=self.load('smpc_used'))
 
                 if self.is_coordinator:
-                    return AGGREGATE_ADV_STATE
+                    return TERMINAL_STATE
                 else:
                     self.log(f'[CLIENT] Sending computation data to coordinator')
                     return TERMINAL_STATE
 
-                #return TERMINAL_STATE
 
 @app_state(WRITE_STATE)
 class WriteState(AppState):
