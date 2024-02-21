@@ -59,6 +59,7 @@ class InitialState(AppState):
             self.store('pred_output', config['fc_fagtb']['output']['pred'])
             self.store('test_output', config['fc_fagtb']['output']['test'])
             self.store('log_output', config['fc_fagtb']['output']['log'])
+            self.store('result_output', config['fc_fagtb']['output']['result'])
             self.store('label_column', config['fc_fagtb']['parameters']['label_col'])
             self.store('sens', config['fc_fagtb']['parameters']['sens'])
             self.store('columns_delete', config['fc_fagtb']['parameters']['columns_delete'])
@@ -73,8 +74,8 @@ class InitialState(AppState):
             sens = self.load('sens')
             label_column = self.load('label_column')
             columns_delete = self.load('columns_delete')
-            X_train = pd.read_csv(f'{INPUT_DIR}/train.csv')
-            X_test = pd.read_csv(f'{INPUT_DIR}/test.csv')
+            X_train = pd.read_csv(f'{INPUT_DIR}/fold_3_train.csv')
+            X_test = pd.read_csv(f'{INPUT_DIR}/fold_3_test.csv')
             sensitive = X_train[sens].values
             sensitivet = X_test[sens].values
             y_train = X_train[label_column]
@@ -121,10 +122,9 @@ class InitialState(AppState):
             #print(sensitive)
             self.store('sensitivet', sensitivet)
             #print(sensitivet)
-            table = [0, 0, 0, 0]
 
-            self.store('n_estimators', 105)
-            classifier = FAGTB(n_estimators=105, learning_rate=0.01, max_depth=10, min_samples_split=1.0,
+            self.store('n_estimators', 300)
+            classifier = FAGTB(n_estimators=300, learning_rate=0.01, max_depth=10, min_samples_split=1.0,
                                min_impurity=False,
                                max_features=20, regression=1)
 
@@ -454,15 +454,14 @@ class UpdateLocalModelState(AppState):
         # OUTPUT TO LOG:
         score = result_classifier_i['score']
         prule = result_classifier_i['prule']
-        sum_lfadv = result_classifier_i['sum_lfadv']
-        sum_losstraining = result_classifier_i['sum_losstraining']
-        sum_lossglobal = result_classifier_i['sum_lossglobal']
-        log = [i, score, prule]
+        scoret = result_classifier_i['scoret']
+        prulet = result_classifier_i['prulet']
 
         log_output = self.load('log_output')
-        with open(f'{OUTPUT_DIR}/{log_output}', 'a') as f:
-            df = pd.DataFrame(log)  # DataFrame mit einem Log-Eintrag erstellen
-            df.to_csv(f, header=f.tell() == 0, index=False)
+        if i % 5 == 0:
+            with open(f'{OUTPUT_DIR}/{log_output}', 'a') as f:
+                pd.DataFrame(data={'i': [i], 'Accuracy_train': [score], 'Prule_train': [prule],
+                                   'Accuracy_test': [scoret], 'Prule_test': [prulet]}).to_csv(f, header=f.tell() == 0, index=False)
 
         self.store('y_predt2', result_classifier_i['y_predt2'])
         self.store('y_predt', result_classifier_i['y_predt'])
@@ -752,10 +751,29 @@ class WriteState(AppState):
 
         np.savetxt(sys.stdout, np.mean(table[1:, ], axis=0).astype(float), '%5.2f')
 
-        with open(f'{OUTPUT_DIR}/{log_output}', 'a') as f:
-            #log['Timestamp'] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            df = pd.DataFrame(table)  # DataFrame mit einem Log-Eintrag erstellen
-            df.to_csv(f, header=f.tell() == 0, index=False)
+        with open(f'{OUTPUT_DIR}/' + self.load('result_output'), 'a') as f:
+            #df = pd.DataFrame(table)  # DataFrame mit einem Log-Eintrag erstellen
+            #df.to_csv(f, header=f.tell() == 0, index=False)
+            pd.DataFrame(data={'Accuracy': [Res['Accuracy'] * 100], 'Balanced Accuracy': [Res['Balanced Accuracy'] * 100],
+                               'ROC Score': [Res['ROC Score'] * 100], 'Prule': [Res['PRULE']],
+                              'DI': [Res['DI']], 'DispFPR': [Res['DispFPR']], 'DispFNR': [Res['DispFNR']]}).to_csv(f, index=False)
 
+
+        X_train = self.load('X_train')
+        y_train = self.load('y_train')
+        sensitive = self.load('sensitive')
+        y_pred_S1_train = local_classifier.predict((X_train.values)[sensitive == 1], n_estimators)
+        score_S1_train = accuracy_score((y_train.values)[sensitive == 1], np.squeeze(y_pred_S1_train) > 0.5)
+        score_balanced_S1_train = balanced_accuracy_score((y_train.values)[sensitive == 1], np.squeeze(y_pred_S1_train) > 0.5)
+        print(f'score S1_train {score_S1_train}, score balanced_S1_train {score_balanced_S1_train}')
+        y_pred_S0_train = local_classifier.predict((X_train.values)[sensitive == 0], n_estimators)
+        score_S0_train = accuracy_score((y_train.values)[sensitive == 0], np.squeeze(y_pred_S0_train) > 0.5)
+        score_balanced_S0_train = balanced_accuracy_score((y_train.values)[sensitive == 0], np.squeeze(y_pred_S0_train) > 0.5)
+        print(f'score S0_train {score_S0_train}, score balanced_S0_train {score_balanced_S0_train}')
+
+        with open(f'{OUTPUT_DIR}/' + self.load('result_output'), 'a') as f:
+            pd.DataFrame(data={'score_S1_train': [score_S1_train], 'score_balanced_S1_train': [score_balanced_S1_train],
+                               'score_S0_train': [score_S0_train], 'score_balanced_S0_train': [score_balanced_S0_train]
+                                }).to_csv(f, index=False)
 
         return TERMINAL_STATE
