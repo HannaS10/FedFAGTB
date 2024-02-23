@@ -1,6 +1,7 @@
 import datetime
 
 import jsonpickle
+import numpy as np
 from FeatureCloud.app.engine.app import AppState, app_state, Role, LogLevel, State
 from sklearn.model_selection import train_test_split, KFold
 
@@ -49,13 +50,11 @@ class InitialState(AppState):
             COMPUTE_LOCAL_MODEL_STATE)  # We declare that 'terminal' state is accessible from the 'initial' state.
 
     def run(self):
-        # config = bios.read(f'{INPUT_DIR}/config.yml')
         try:
             self.log("[CLIENT] Read input and config")
             config = bios.read(f'{INPUT_DIR}/config.yml')
             self.store('train', config['fc_fagtb']['input']['train'])
             self.store('test', config['fc_fagtb']['input']['test'])
-            max_iterations = self.store('max_iterations', config['fc_fagtb']['algo']['max_iterations'])
             self.store('pred_output', config['fc_fagtb']['output']['pred'])
             self.store('test_output', config['fc_fagtb']['output']['test'])
             self.store('log_output', config['fc_fagtb']['output']['log'])
@@ -66,16 +65,20 @@ class InitialState(AppState):
             self.store('sep', config['fc_fagtb']['format']['sep'])
             self.store('split_mode', config['fc_fagtb']['split']['mode'])
             self.store('split_dir', config['fc_fagtb']['split']['dir'])
-            #self.log(f'Max iterations: {max_iterations}')
             self.log('Done reading Config File...')
 
-            train_path = '/' + self.load('train')
-            test_path = '/' + self.load('test')
+            self.store('fold', 1)
+            fold = self.load('fold')
+            self.store('LAMBDA', 0.15)
+            LAMBDA = self.load('LAMBDA')
+            print(f'RUNNING TEST WITH fold {fold} and LAMBDA {LAMBDA}')
+
             sens = self.load('sens')
             label_column = self.load('label_column')
             columns_delete = self.load('columns_delete')
-            X_train = pd.read_csv(f'{INPUT_DIR}/fold_3_train.csv')
-            X_test = pd.read_csv(f'{INPUT_DIR}/fold_3_test.csv')
+            X_train = pd.read_csv(f'{INPUT_DIR}/fold_{fold}_train.csv')
+            X_test = pd.read_csv(f'{INPUT_DIR}/fold_{fold}_test.csv')
+
             sensitive = X_train[sens].values
             sensitivet = X_test[sens].values
             y_train = X_train[label_column]
@@ -101,12 +104,20 @@ class InitialState(AppState):
             # X_test = X_test.drop(columns_delete,1)
             X_test = X_test.drop(columns_delete, axis=1)
 
+            y_train = np.asarray(y_train)
+
+            sensitivet = np.asarray(sensitivet)
+            sensitive = np.asarray(sensitive)
             # X_train = X_train.drop(columns_delete,1)
             X_train = X_train.drop(label_column, axis=1)
+            X_train = np.asarray(X_train)
+
             # X_test = X_test.drop(columns_delete,1)
             X_test = X_test.drop(label_column, axis=1)
+            X_test = np.asarray(X_test)
 
             y_test.to_csv(f'{OUTPUT_DIR}/' + self.load('test_output'), index=False)
+            y_test = np.asarray(y_test)
             #pd.DataFrame(data={'sum_pred': sum_pred}).to_csv(f'{OUTPUT_DIR}/{pred_output}')
 
             #print('Datasets:')
@@ -117,7 +128,7 @@ class InitialState(AppState):
             self.store('X_test', X_test)
             #print(X_test)
             self.store('y_test', y_test)
-            print(f'y_test {y_test}')
+            #print(f'y_test {y_test}')
             self.store('sensitive', sensitive)
             #print(sensitive)
             self.store('sensitivet', sensitivet)
@@ -169,7 +180,7 @@ class ComputeLocalModelState(AppState):
         y_test = self.load('y_test')
         sensitive = self.load('sensitive')
         sensitivet = self.load('sensitivet')
-
+        LAMBDA = self.load('LAMBDA')
         n_estimators = self.load('n_estimators')
         #for i in range(i, n_estimators):
         print('#####################################################################')
@@ -178,8 +189,8 @@ class ComputeLocalModelState(AppState):
         if i == 0:
             print('initialization')
             classifier = self.await_data()
-            init_result = classifier.fit_initial(X_train.values, y_train.values, sensitive, LAMBDA=0.15,
-                                                 Xtest=X_test.values, yt=y_test, sensitivet=sensitivet)
+            init_result = classifier.fit_initial(X_train, y_train, sensitive, LAMBDA=LAMBDA, # .values wenn Daten in pd vorliegen
+                                                 Xtest=X_test, yt=y_test, sensitivet=sensitivet)
             #y_pred2, y_pred, y_predt, lfadv = init_result.values()
             y_pred = init_result['y_pred']
             #lfadv = init_result['lfadv']
@@ -238,9 +249,10 @@ class ComputeLocalModelState(AppState):
                   #                                              train_steps, aggregated_result, sensitive)
                 #gradient_adv_from_adversarial = result_adversarial_i['lfadv']
         lfadv = self.load('lfadv')
+        LAMBDA = self.load('LAMBDA')
         #print(f'f lfadv {lfadv}')
-        result_classifier_i = classifier.fit_classifier(X_train.values, y_train.values, sensitive, LAMBDA=0.15,
-                                                        Xtest=X_test.values, yt=y_test, sensitivet=sensitivet,
+        result_classifier_i = classifier.fit_classifier(X_train, y_train, sensitive, LAMBDA=LAMBDA, #values
+                                                        Xtest=X_test, yt=y_test, sensitivet=sensitivet,
                                                         y_pred=y_pred,
                                                         y_predt=y_predt,
                                                         lfadv=lfadv,
@@ -342,7 +354,7 @@ class AggregateClassifierState(AppState):
         self.store('global_model', global_model)
         #self.log(f'global_model {global_model}')
 
-        done = self.load('iteration') >= self.load('max_iterations')
+        #done = self.load('iteration') >= self.load('max_iterations')
         #data_to_broadcast.append(global_model)
 
         self.broadcast_data(global_model) # data_to_broadcast
@@ -370,8 +382,6 @@ class ComputeGlobalModelState(AppState):
         #self.log(f'global_model {global_model}')
         X_train = self.load('X_train')
         X_test = self.load('X_test')
-        y_train = self.load('Y_train')
-        pred_output = self.load('pred_output')
 
         # Initialize an empty list to store individual predictions
         individual_predictions_train = []
@@ -384,12 +394,12 @@ class ComputeGlobalModelState(AppState):
                 raise TypeError("All elements in global_model should be instances of DecisionTreeRegressor")
             individual_predictions_train.append(local_model.predict(X_train))
             #print(f'individual predictions train {individual_predictions_train}')
-            individual_predictions_test.append(local_model.predict(X_test))
+            #individual_predictions_test.append(local_model.predict(X_test))
             #print(f'individual predictions test {individual_predictions_test}')
 
         # Aggregate predictions (e.g., take the average)
         individual_predictions_train = np.mean(individual_predictions_train, axis=0)
-        individual_predictions_test = np.mean(individual_predictions_test, axis=0)
+        #individual_predictions_test = np.mean(individual_predictions_test, axis=0)
         #print(individual_predictions_train)
         #print(individual_predictions_test)
 
@@ -398,7 +408,7 @@ class ComputeGlobalModelState(AppState):
         # score = accuracy_score(y_train, aggregated_predictions)
 
         self.store('predictions', individual_predictions_train)
-        self.store('predictions_test', individual_predictions_test)
+        #self.store('predictions_test', individual_predictions_test)
         # self.store('score_combined', score)
 
         # pd.DataFrame(data={'sum_pred': aggregated_predictions}).to_csv(f'{OUTPUT_DIR}/{pred_output}')
@@ -429,23 +439,24 @@ class UpdateLocalModelState(AppState):
 
         y_pred = self.load('y_pred')
         #print(f'y_pred {y_pred}')
-        y_predt = self.load('y_predt')
+        #y_predt = self.load('y_predt')
         lfadv = self.load('lfadv')
 
         n_estimators = self.load('n_estimators')
         #for i in range(n_estimators):
         update = self.load('predictions')
         #print(f'update {update}')
-        updatet = self.load('predictions_test')
+        #updatet = self.load('predictions_test')
         local_model = self.load('local_model_from_classifier')
         local_classifier = self.load('local_classifier')
         print(f'local_classifier {local_classifier}')
-        result_classifier_i = local_classifier.update_classifier(X_train.values, y_train.values, sensitive, LAMBDA=0.15,
-                                                        Xtest=X_test.values, yt=y_test, sensitivet=sensitivet,
+        LAMBDA = self.load('LAMBDA')
+        result_classifier_i = local_classifier.update_classifier(X_train, y_train, sensitive, LAMBDA=LAMBDA, #values
+                                                        Xtest=X_test, yt=y_test, sensitivet=sensitivet,
                                                         y_pred=y_pred,
-                                                        y_predt=y_predt,
+                                                        #y_predt=y_predt,
                                                         lfadv=lfadv,
-                                                        update=update, updatet=updatet,
+                                                        update=update, #updatet=updatet,
                                                         i=i)
         self.store('y_pred2', result_classifier_i['y_pred2'])
         self.store('y_pred', result_classifier_i['y_pred'])
@@ -454,18 +465,19 @@ class UpdateLocalModelState(AppState):
         # OUTPUT TO LOG:
         score = result_classifier_i['score']
         prule = result_classifier_i['prule']
-        scoret = result_classifier_i['scoret']
-        prulet = result_classifier_i['prulet']
+        #scoret = result_classifier_i['scoret']
+        #prulet = result_classifier_i['prulet']
 
         log_output = self.load('log_output')
-        if i % 5 == 0:
-            with open(f'{OUTPUT_DIR}/{log_output}', 'a') as f:
-                pd.DataFrame(data={'i': [i], 'Accuracy_train': [score], 'Prule_train': [prule],
-                                   'Accuracy_test': [scoret], 'Prule_test': [prulet]}).to_csv(f, header=f.tell() == 0, index=False)
+        #if i % 5 == 0:
+         #   with open(f'{OUTPUT_DIR}/{log_output}', 'a') as f:
+          #      pd.DataFrame(data={'i': [i], 'Accuracy_train': [score], 'Prule_train': [prule],
+           #                        #'Accuracy_test': [scoret], 'Prule_test': [prulet]
+            #                       }).to_csv(f, header=f.tell() == 0, index=False)
 
-        self.store('y_predt2', result_classifier_i['y_predt2'])
-        self.store('y_predt', result_classifier_i['y_predt'])
-        y_predt = self.load('y_predt')
+        #self.store('y_predt2', result_classifier_i['y_predt2'])
+        #self.store('y_predt', result_classifier_i['y_predt'])
+        #y_predt = self.load('y_predt')
         # print(f'y_predt {y_predt}')
         #self.store('scoret', result_classifier_i['scoret'])
 
@@ -586,7 +598,7 @@ class AggregateAdversarialState(AppState):
         mean_bias = np.mean(biases_aggregated)
 
         data_to_broadcast.append([mean_weight, mean_bias])
-        done = self.load('iteration') >= self.load('max_iterations')
+        #done = self.load('iteration') >= self.load('max_iterations')
         self.broadcast_data(data_to_broadcast)
         #print(f'data_to_broadcast {data_to_broadcast}')
         self.log(f'[CLIENT] Broadcasting computation data to clients')
@@ -723,16 +735,14 @@ class WriteState(AppState):
 
         X_test = self.load('X_test')
         y_test = self.load('y_test')
-        print(f'y_test values {y_test.values}')
         sensitivet = self.load('sensitivet')
-        print(f'sensitivet {sensitivet}')
         pred_output = self.load('pred_output')
         log_output = self.load('log_output')
         table = [0, 0, 0, 0]
 
         n_estimators = self.load('n_estimators')
 
-        sum_pred = local_classifier.predict(X_test.values, n_estimators)
+        sum_pred = local_classifier.predict(X_test, n_estimators) #values
         print(f'y_predt2 {sum_pred}')
         #score = accuracy_score(y_test, sum_pred)
         score = accuracy_score(y_test, np.squeeze(sum_pred) > 0.5) # überprüft ob Wert größer als 0.5 ist, wenn ja, dann Wert = 1 (für classification)
@@ -746,7 +756,7 @@ class WriteState(AppState):
         pd.DataFrame(data={'prediction': sum_pred}).to_csv(f'{OUTPUT_DIR}/{pred_output}', index=False)
 
         print('Results on test set :')
-        Res = display_results(sum_pred, y_test.values, sensitivet)
+        Res = display_results(sum_pred, y_test, sensitivet) #values
         table = np.vstack([table, [Res['Accuracy'] * 100, Res['PRULE'], Res['DispFPR'], Res['DispFNR']]])
 
         np.savetxt(sys.stdout, np.mean(table[1:, ], axis=0).astype(float), '%5.2f')
@@ -762,13 +772,13 @@ class WriteState(AppState):
         X_train = self.load('X_train')
         y_train = self.load('y_train')
         sensitive = self.load('sensitive')
-        y_pred_S1_train = local_classifier.predict((X_train.values)[sensitive == 1], n_estimators)
-        score_S1_train = accuracy_score((y_train.values)[sensitive == 1], np.squeeze(y_pred_S1_train) > 0.5)
-        score_balanced_S1_train = balanced_accuracy_score((y_train.values)[sensitive == 1], np.squeeze(y_pred_S1_train) > 0.5)
+        y_pred_S1_train = local_classifier.predict((X_train)[sensitive == 1], n_estimators) #values
+        score_S1_train = accuracy_score((y_train)[sensitive == 1], np.squeeze(y_pred_S1_train) > 0.5) #values
+        score_balanced_S1_train = balanced_accuracy_score((y_train)[sensitive == 1], np.squeeze(y_pred_S1_train) > 0.5) #values
         print(f'score S1_train {score_S1_train}, score balanced_S1_train {score_balanced_S1_train}')
-        y_pred_S0_train = local_classifier.predict((X_train.values)[sensitive == 0], n_estimators)
-        score_S0_train = accuracy_score((y_train.values)[sensitive == 0], np.squeeze(y_pred_S0_train) > 0.5)
-        score_balanced_S0_train = balanced_accuracy_score((y_train.values)[sensitive == 0], np.squeeze(y_pred_S0_train) > 0.5)
+        y_pred_S0_train = local_classifier.predict((X_train)[sensitive == 0], n_estimators) #values
+        score_S0_train = accuracy_score((y_train)[sensitive == 0], np.squeeze(y_pred_S0_train) > 0.5) #values
+        score_balanced_S0_train = balanced_accuracy_score((y_train)[sensitive == 0], np.squeeze(y_pred_S0_train) > 0.5) #values
         print(f'score S0_train {score_S0_train}, score balanced_S0_train {score_balanced_S0_train}')
 
         with open(f'{OUTPUT_DIR}/' + self.load('result_output'), 'a') as f:
