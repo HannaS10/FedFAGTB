@@ -38,6 +38,8 @@ UPDATE_LOCAL_ADV_STATE = 'update local adversarial'
 WRITE_STATE = 'write'
 TERMINAL_STATE = 'terminal'
 
+#n_clients
+#LAMBDA
 
 # FeatureCloud requires that apps define the at least the 'initial' state.
 # This state is executed after the app instance is started.
@@ -49,7 +51,7 @@ class InitialState(AppState):
         self.register_transition(
             COMPUTE_LOCAL_MODEL_STATE)  # We declare that 'terminal' state is accessible from the 'initial' state.
 
-    def run(self):
+    def run(self): #, n_clients, LAMBDA
         try:
             self.log("[CLIENT] Read input and config")
             config = bios.read(f'{INPUT_DIR}/config.yml')
@@ -67,9 +69,17 @@ class InitialState(AppState):
             self.store('split_dir', config['fc_fagtb']['split']['dir'])
             self.log('Done reading Config File...')
 
-            self.store('fold', 1)
+            # Lesen der übergebenen Argumente von der Befehlszeile
+            # n_clients = int(sys.argv[1]) if len(sys.argv) > 1 else 1
+            # lambdas = float(sys.argv[2]) if len(sys.argv) > 2 else 0.0
+
+            # Verwenden der übergebenen Argumente in Ihrem Skript
+            # print("n_clients:", n_clients)
+            # print("lambdas:", lambdas)
+
+            self.store('fold', 5) #1,2,3,4,5
             fold = self.load('fold')
-            self.store('LAMBDA', 0.15)
+            self.store('LAMBDA', 0.8) #lambdas
             LAMBDA = self.load('LAMBDA')
             print(f'RUNNING TEST WITH fold {fold} and LAMBDA {LAMBDA}')
 
@@ -79,25 +89,28 @@ class InitialState(AppState):
             X_train = pd.read_csv(f'{INPUT_DIR}/fold_{fold}_train.csv')
             X_test = pd.read_csv(f'{INPUT_DIR}/fold_{fold}_test.csv')
 
+            #X_train = pd.read_csv(f'{INPUT_DIR}/train.csv')
+            #X_test = pd.read_csv(f'{INPUT_DIR}/test.csv')
+
             sensitive = X_train[sens].values
             sensitivet = X_test[sens].values
             y_train = X_train[label_column]
             y_test = X_test[label_column]
 
-            scaler = StandardScaler().fit(X_train)
-            s = X_train[sens]
-            st = X_test[sens]
-            t = X_train[label_column]
-            tt = X_test[label_column]
-            scale_df = lambda df, scaler: pd.DataFrame(scaler.transform(df), columns=df.columns, index=df.index)
-            X_train = X_train.pipe(scale_df, scaler)
-            X_test = X_test.pipe(scale_df, scaler)
-            X_train = X_train.drop(sens, axis=1)
-            X_train[sens] = s
-            X_train[label_column] = t
-            X_test = X_test.drop(sens, axis=1)
-            X_test[sens] = st
-            X_test[label_column] = tt
+            #scaler = StandardScaler().fit(X_train)
+            #s = X_train[sens]
+            #st = X_test[sens]
+            #t = X_train[label_column]
+            #tt = X_test[label_column]
+            #scale_df = lambda df, scaler: pd.DataFrame(scaler.transform(df), columns=df.columns, index=df.index)
+            #X_train = X_train.pipe(scale_df, scaler)
+            #X_test = X_test.pipe(scale_df, scaler)
+            #X_train = X_train.drop(sens, axis=1)
+            #X_train[sens] = s
+            #X_train[label_column] = t
+            #X_test = X_test.drop(sens, axis=1)
+            #X_test[sens] = st
+            #X_test[label_column] = tt
 
             # X_train = X_train.drop(columns_delete,1)
             X_train = X_train.drop(columns_delete, axis=1)
@@ -138,7 +151,7 @@ class InitialState(AppState):
             classifier = FAGTB(n_estimators=300, learning_rate=0.01, max_depth=10, min_samples_split=1.0,
                                min_impurity=False,
                                max_features=20, regression=1)
-
+            print(f'classifier {classifier}')
             self.store('iteration', 0)
             self.store('i', 0)
 
@@ -189,9 +202,11 @@ class ComputeLocalModelState(AppState):
         if i == 0:
             print('initialization')
             classifier = self.await_data()
+            print(f'classifier in compoute global {classifier}')
             init_result = classifier.fit_initial(X_train, y_train, sensitive, LAMBDA=LAMBDA, # .values wenn Daten in pd vorliegen
                                                  Xtest=X_test, yt=y_test, sensitivet=sensitivet)
-            #y_pred2, y_pred, y_predt, lfadv = init_result.values()
+
+            print('classifier.fit_initial DONE')#y_pred2, y_pred, y_predt, lfadv = init_result.values()
             y_pred = init_result['y_pred']
             #lfadv = init_result['lfadv']
             self.store('y_pred', y_pred)
@@ -203,6 +218,7 @@ class ComputeLocalModelState(AppState):
             (graph, X_input, y_input, sigm, logit, loss, train_steps, sigm2, pred, acc, init_var, var_grad,
              W1, b1, assign_W1, assign_b1, new_W1, new_b1) = classifier.build_graph(input_size=1, seed=7,
                                                                                     learning_rate2=0.01)
+            print('classifier.build_graph DONE')
             self.store('graph', graph)
             self.store('X_input', X_input)
             self.store('y_input', y_input)
@@ -223,6 +239,7 @@ class ComputeLocalModelState(AppState):
             self.store('new_W1', new_W1)
             self.store('new_b1', new_b1)
             sess = classifier.initialize_session(graph, init_var)
+            print('classifier.initilaize_session DONE')
             self.store('sess', sess)
             # Fit adversarial for i = 0
             #self.log(f'sess {sess}, graph {graph}, X_input {X_input}, y_input {y_input}, sigm2 {sigm2}, '
@@ -230,6 +247,7 @@ class ComputeLocalModelState(AppState):
                     # f'W1 {W1}, b1 {b1}, loss {loss}, acc {acc}')
             result_adversarial_i = classifier.fit_adversial(sess, graph, X_input, y_input, sigm2, var_grad,
                                                            train_steps, y_pred, sensitive, W1, b1, loss, acc, sigm, logit)
+            print('classifier.fit_adversial DONE')
             lfadv = result_adversarial_i['lfadv']
             self.store('lfadv', lfadv)
             # self.log(f'lfadv {gradient_adv_from_adversarial}')
