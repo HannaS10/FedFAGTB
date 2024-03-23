@@ -1,4 +1,5 @@
 import datetime
+import pickle
 
 import jsonpickle
 import numpy as np
@@ -69,17 +70,9 @@ class InitialState(AppState):
             self.store('split_dir', config['fc_fagtb']['split']['dir'])
             self.log('Done reading Config File...')
 
-            # Lesen der übergebenen Argumente von der Befehlszeile
-            # n_clients = int(sys.argv[1]) if len(sys.argv) > 1 else 1
-            # lambdas = float(sys.argv[2]) if len(sys.argv) > 2 else 0.0
-
-            # Verwenden der übergebenen Argumente in Ihrem Skript
-            # print("n_clients:", n_clients)
-            # print("lambdas:", lambdas)
-
             self.store('fold', 5) #1,2,3,4,5
             fold = self.load('fold')
-            self.store('LAMBDA', 0.8) #lambdas
+            self.store('LAMBDA', 1.0) #lambdas
             LAMBDA = self.load('LAMBDA')
             print(f'RUNNING TEST WITH fold {fold} and LAMBDA {LAMBDA}')
 
@@ -97,25 +90,12 @@ class InitialState(AppState):
             y_train = X_train[label_column]
             y_test = X_test[label_column]
 
-            #scaler = StandardScaler().fit(X_train)
-            #s = X_train[sens]
-            #st = X_test[sens]
-            #t = X_train[label_column]
-            #tt = X_test[label_column]
-            #scale_df = lambda df, scaler: pd.DataFrame(scaler.transform(df), columns=df.columns, index=df.index)
-            #X_train = X_train.pipe(scale_df, scaler)
-            #X_test = X_test.pipe(scale_df, scaler)
-            #X_train = X_train.drop(sens, axis=1)
-            #X_train[sens] = s
-            #X_train[label_column] = t
-            #X_test = X_test.drop(sens, axis=1)
-            #X_test[sens] = st
-            #X_test[label_column] = tt
-
             # X_train = X_train.drop(columns_delete,1)
-            X_train = X_train.drop(columns_delete, axis=1)
+            X_train = X_train.drop(columns_delete, axis=1) #FOR ADULT AND COMPAS(?)
+            X_train = X_train.drop(sens, axis=1)
             # X_test = X_test.drop(columns_delete,1)
-            X_test = X_test.drop(columns_delete, axis=1)
+            X_test = X_test.drop(columns_delete, axis=1) #ONLY FOR ADULT
+            X_test = X_test.drop(sens, axis=1)
 
             y_train = np.asarray(y_train)
 
@@ -136,10 +116,12 @@ class InitialState(AppState):
             #print('Datasets:')
             self.store('X_train', X_train)
             #print(X_train)
+            print(f'shape and len {X_train.shape} {len(X_train)}')
             self.store('y_train', y_train)
             #print(y_train)
             self.store('X_test', X_test)
             #print(X_test)
+            print(f'shape and len {X_test.shape} {len(X_test)}')
             self.store('y_test', y_test)
             #print(f'y_test {y_test}')
             self.store('sensitive', sensitive)
@@ -157,7 +139,20 @@ class InitialState(AppState):
 
             if self.is_coordinator:
                 self.log('Broadcasting initial model...')
-                self.broadcast_data(classifier)
+                self.broadcast_data(classifier)#, send_to_self=True
+                #self._app.data_incoming.keys()
+                #self._app.data_incoming.values()
+                #print(f'self_data_incoming keys {self._app.data_incoming.keys()}')
+                #print(f'self_data_incoming values {self._app.data_incoming.values()}')
+
+                #time.sleep(20)
+                #print(f'self_data_incoming keys {self._app.data_incoming.keys()}')
+                #print(f'self_data_incoming values {self._app.data_incoming.values()}')
+                #classifier = self.gather_data()
+                #print(f'classifier {classifier}')
+                #print(f'self_data_incoming keys {self._app.data_incoming.keys()}')
+                #print(f'self_data_incoming values {self._app.data_incoming.values()}')
+
             return COMPUTE_LOCAL_MODEL_STATE
 
         except Exception as e:
@@ -201,6 +196,15 @@ class ComputeLocalModelState(AppState):
         # Initialize the classifier
         if i == 0:
             print('initialization')
+            #print(f'self_data_incoming {len(self._app.data_incoming)}')
+            #print(f'len clients {len(self._app.clients)}')
+            #print(f'self_data_incoming values {self._app.data_incoming.values()}')
+            #if len(self._app.clients) == 1:
+             #   print(f'VALUES {self._app.data_incoming.values()}')
+                #classifier = self._app.data_incoming['None']
+              #  classifier = pickle.loads(self._app.data_incoming['None'][0][0])
+
+            #else:
             classifier = self.await_data()
             print(f'classifier in compoute global {classifier}')
             init_result = classifier.fit_initial(X_train, y_train, sensitive, LAMBDA=LAMBDA, # .values wenn Daten in pd vorliegen
@@ -242,15 +246,11 @@ class ComputeLocalModelState(AppState):
             print('classifier.initilaize_session DONE')
             self.store('sess', sess)
             # Fit adversarial for i = 0
-            #self.log(f'sess {sess}, graph {graph}, X_input {X_input}, y_input {y_input}, sigm2 {sigm2}, '
-                    # f'var_grad {var_grad}, train_steps {train_steps}, y_pred {y_pred}, sensitive {sensitive}, '
-                    # f'W1 {W1}, b1 {b1}, loss {loss}, acc {acc}')
             result_adversarial_i = classifier.fit_adversial(sess, graph, X_input, y_input, sigm2, var_grad,
                                                            train_steps, y_pred, sensitive, W1, b1, loss, acc, sigm, logit)
             print('classifier.fit_adversial DONE')
             lfadv = result_adversarial_i['lfadv']
             self.store('lfadv', lfadv)
-            # self.log(f'lfadv {gradient_adv_from_adversarial}')
         else:
             # Fetch the new lfadv for gradient calculation
             #lfadv = self.load('lfadv')
@@ -260,12 +260,7 @@ class ComputeLocalModelState(AppState):
             #print(f'y_pred {y_pred}')
             y_predt = self.load('y_predt')
             #print(f'y_pred {y_predt}')
-            #return TERMINAL_STATE
 
-                # aggregated_result = self.await_data()
-                #result_adversarial_i = classifier.fit_adversial(sess, graph, X_input, y_input, sigm2, var_grad,
-                  #                                              train_steps, aggregated_result, sensitive)
-                #gradient_adv_from_adversarial = result_adversarial_i['lfadv']
         lfadv = self.load('lfadv')
         LAMBDA = self.load('LAMBDA')
         #print(f'f lfadv {lfadv}')
@@ -275,8 +270,6 @@ class ComputeLocalModelState(AppState):
                                                         y_predt=y_predt,
                                                         lfadv=lfadv,
                                                         i=i)
-
-        #print(result_classifier_i)
 
         local_model_from_classifier = result_classifier_i['local_model']
         self.store('local_model_from_classifier', local_model_from_classifier)
@@ -290,22 +283,6 @@ class ComputeLocalModelState(AppState):
         else:
             self.log(f'[CLIENT] Sending computation data to coordinator')
             return WAIT_FOR_AGGREGATION_STATE
-    # wenn
-    # Warten auf glob. Klassifikatormodell und glob. Angreifermodell
-    # fagtb = self.await_data()
-
-    # (A) Residudenberechnung
-    # (B) Faire Residuenberechnung
-    # (C) Ableitung Trainingsverlust
-    # (D) Baumfitting/ Hinzufügen eines neuen Baums (Training)
-    # (E) Skalierung der Lernrate
-    # (F) Aktualisierung des lokalen Modells -> send to coordinator -> switch to Aggregate State
-    # lokalen Score berechnen
-
-    # if done:
-    #   return WRITE_STATE
-
-    # self.send_data_to_coordinator(model, done)
 
 
 @app_state(WAIT_FOR_AGGREGATION_STATE)
@@ -348,10 +325,6 @@ class AggregateClassifierState(AppState):
         self.register_transition(WRITE_STATE)
 
     def run(self):
-        #   Aggregieren der lokalen Modellaktualiserungen zu einem glob. Modells
-        #   globalen Score (Accuracy und prule) berechnen
-        #   Broadcast glob. Modell an Clients (COMPUTE)
-        #   Broadcast glob. Modell an COMPUTEADV
         #self.log("[CLIENT] Perform aggregation of classifiers")
         i = self.load('i')
         print(f'i {i} Perform AGGREGATE_CLASSIFIER_STATE')
@@ -415,7 +388,7 @@ class ComputeGlobalModelState(AppState):
             #individual_predictions_test.append(local_model.predict(X_test))
             #print(f'individual predictions test {individual_predictions_test}')
 
-        # Aggregate predictions (e.g., take the average)
+        # Aggregate predictions
         individual_predictions_train = np.mean(individual_predictions_train, axis=0)
         #individual_predictions_test = np.mean(individual_predictions_test, axis=0)
         #print(individual_predictions_train)
@@ -429,7 +402,6 @@ class ComputeGlobalModelState(AppState):
         #self.store('predictions_test', individual_predictions_test)
         # self.store('score_combined', score)
 
-        # pd.DataFrame(data={'sum_pred': aggregated_predictions}).to_csv(f'{OUTPUT_DIR}/{pred_output}')
         return UPDATE_LOCAL_MODEL_STATE
 
 
@@ -486,22 +458,7 @@ class UpdateLocalModelState(AppState):
         #scoret = result_classifier_i['scoret']
         #prulet = result_classifier_i['prulet']
 
-        log_output = self.load('log_output')
-        #if i % 5 == 0:
-         #   with open(f'{OUTPUT_DIR}/{log_output}', 'a') as f:
-          #      pd.DataFrame(data={'i': [i], 'Accuracy_train': [score], 'Prule_train': [prule],
-           #                        #'Accuracy_test': [scoret], 'Prule_test': [prulet]
-            #                       }).to_csv(f, header=f.tell() == 0, index=False)
-
-        #self.store('y_predt2', result_classifier_i['y_predt2'])
-        #self.store('y_predt', result_classifier_i['y_predt'])
-        #y_predt = self.load('y_predt')
-        # print(f'y_predt {y_predt}')
-        #self.store('scoret', result_classifier_i['scoret'])
-
         self.store('local_classifier', local_classifier)
-
-        #self.log(f'new y_pred: {y_pred}')
 
         if i < n_estimators-1:
             return COMPUTE_LOCAL_ADV_STATE
@@ -546,13 +503,7 @@ class ComputeLocalAdversarialState(AppState):
         #print(type(local_classifier))
         data_to_broadcast = []
         n_estimators = self.load('n_estimators')
-        #for i in range(n_estimators):
-        #print(i)
-        # Initialize the classifier
-        #self.log(f'sess {sess}, graph {graph}, X_input {X_input}, y_input {y_input}, sigm2 {sigm2}, var_grad {var_grad}, '
-         #        f'train_steps {train_steps}, y_pred {y_pred}, sensitive {sensitive}, W1 {W1}, b1 {b1}')
-        # result_adversarial_i = local_classifier.fit_adversial(sess, graph, X_input, y_input, sigm2, var_grad,
-                                                        # train_steps, y_pred, sensitive)
+
         result_adversarial_i = local_classifier.update_adversial(sess, graph, X_input, y_input, sigm2, var_grad,
                                                         train_steps, y_pred, sensitive, W1, b1, loss, acc)
         updated_weight = result_adversarial_i['W1_updated']
@@ -588,10 +539,6 @@ class AggregateAdversarialState(AppState):
         #self.log("[CLIENT] Perform aggregation of adversarials")
         i = self.load('i')
         print(f'i {i} Perform AGGREGATE_ADV_STATE')
-        #   Aggregieren der lokalen Modellaktualiserungen zu einem glob. Modells
-        #   globalen Score (Accuracy und prule) berechnen
-        #   Broadcast glob. Modell an Clients (COMPUTE)
-        #   Broadcast glob. Modell an COMPUTEADV
 
         n_estimators = self.load('n_estimators')
         #for i in range(n_estimators):
@@ -670,8 +617,6 @@ class UpdateLocalAdversarialState(AppState):
 
         i = self.load('i')
         print(f'i {i} Perform UPDATE_LOCAL_ADV_STATE')
-        #   Anpassen Angreifer-Klassifikator an neue glob. Modell
-        #   Broadcast an Clients (COMPUTE)
 
         mean_weight_bias = self.await_data()
         #self.log(f'global_model {mean_weight_bias}')
@@ -708,12 +653,6 @@ class UpdateLocalAdversarialState(AppState):
         #print(type(local_classifier))
 
         n_estimators = self.load('n_estimators')
-        #for i in range(n_estimators):
-        #print(i)
-        #self.log(
-         #   f'sess {sess}, graph {graph}, X_input {X_input}, y_input {y_input}, sigm2 {sigm2}, '
-          #  f'var_grad {var_grad}, train_steps {train_steps}, y_pred {y_pred}, sensitive {sensitive}'
-           # f'W1 {W1}, b1 {b1}, newW1 {new_W}, newb1 {new_b}')
         result_adversarial_i = local_classifier.update_adv_gradient(sess, graph, X_input, y_input, sigm2, var_grad,
                                                                  train_steps, y_pred, sensitive,
                                                                 W1, b1, new_W, new_b, assign_W1, assign_b1, new_W1, new_b1, loss, acc)
@@ -763,7 +702,7 @@ class WriteState(AppState):
         sum_pred = local_classifier.predict(X_test, n_estimators) #values
         print(f'y_predt2 {sum_pred}')
         #score = accuracy_score(y_test, sum_pred)
-        score = accuracy_score(y_test, np.squeeze(sum_pred) > 0.5) # überprüft ob Wert größer als 0.5 ist, wenn ja, dann Wert = 1 (für classification)
+        score = accuracy_score(y_test, np.squeeze(sum_pred) > 0.5)
 
         self.log(
             f'[API] Combined FGTB classifier model score on local test data for [CLIENT]]: {score}')
@@ -780,8 +719,6 @@ class WriteState(AppState):
         np.savetxt(sys.stdout, np.mean(table[1:, ], axis=0).astype(float), '%5.2f')
 
         with open(f'{OUTPUT_DIR}/' + self.load('result_output'), 'a') as f:
-            #df = pd.DataFrame(table)  # DataFrame mit einem Log-Eintrag erstellen
-            #df.to_csv(f, header=f.tell() == 0, index=False)
             pd.DataFrame(data={'Accuracy': [Res['Accuracy'] * 100], 'Balanced Accuracy': [Res['Balanced Accuracy'] * 100],
                                'ROC Score': [Res['ROC Score'] * 100], 'Prule': [Res['PRULE']],
                               'DI': [Res['DI']], 'DispFPR': [Res['DispFPR']], 'DispFNR': [Res['DispFNR']]}).to_csv(f, index=False)
