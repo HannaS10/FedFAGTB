@@ -78,6 +78,8 @@ class InitialState(AppState):
             sens = self.load('sens')
             label_column = self.load('label_column')
             columns_delete = self.load('columns_delete')
+
+            # IMPORT TRAINING AND TEST DATA
             X_train = pd.read_csv(f'{INPUT_DIR}/fold_{fold}_train.csv')
             X_test = pd.read_csv(f'{INPUT_DIR}/fold_{fold}_test.csv')
 
@@ -128,6 +130,7 @@ class InitialState(AppState):
             self.store('sensitivet', sensitivet)
             #print(sensitivet)
 
+            # CREATE INITIAL CLASSIFIER WITH X TREES AND BROADCAST TO THE PARTICIPANTS
             self.store('n_estimators', 300)
             classifier = FAGTB(n_estimators=300, learning_rate=0.01, max_depth=10, min_samples_split=1.0,
                                min_impurity=False,
@@ -204,6 +207,7 @@ class ComputeLocalModelState(AppState):
               #  classifier = pickle.loads(self._app.data_incoming['None'][0][0])
 
             #else:
+            # RECEIVE INITIAL CLASSIFIER AND INITIALIZE Y_PRED
             classifier = self.await_data()
             print(f'classifier in compoute global {classifier}')
             init_result = classifier.fit_initial(X_train, y_train, sensitive, LAMBDA=LAMBDA, # .values wenn Daten in pd vorliegen
@@ -218,6 +222,7 @@ class ComputeLocalModelState(AppState):
             y_predt = init_result['y_predt']
             self.store('y_predt', y_predt)
 
+            # INITIALIZE ADVERSARIAL
             (graph, X_input, y_input, sigm, logit, loss, train_steps, sigm2, pred, acc, init_var, var_grad,
              W1, b1, assign_W1, assign_b1, new_W1, new_b1) = classifier.build_graph(input_size=1, seed=7,
                                                                                     learning_rate2=0.01)
@@ -244,25 +249,26 @@ class ComputeLocalModelState(AppState):
             sess = classifier.initialize_session(graph, init_var)
             print('classifier.initilaize_session DONE')
             self.store('sess', sess)
-            # Fit adversarial for i = 0
+
+            # FIT ADVERSARIAL for i = 0
             result_adversarial_i = classifier.fit_adversial(sess, graph, X_input, y_input, sigm2, var_grad,
                                                            train_steps, y_pred, sensitive, W1, b1, loss, acc, sigm, logit)
             print('classifier.fit_adversial DONE')
             lfadv = result_adversarial_i['lfadv']
             self.store('lfadv', lfadv)
         else:
-            # Fetch the new lfadv for gradient calculation
-            #lfadv = self.load('lfadv')
-            #print(f'lfadv {lfadv}')
+            # LOAD CLASSIFIER AND CURRENT Y_PRED
             classifier = self.load('local_classifier')
             y_pred = self.load('y_pred')
             #print(f'y_pred {y_pred}')
             y_predt = self.load('y_predt')
             #print(f'y_pred {y_predt}')
 
+        # LOAD CURRENT ADVERSARIAL LOSS
         lfadv = self.load('lfadv')
         LAMBDA = self.load('LAMBDA')
-        #print(f'f lfadv {lfadv}')
+
+        # FIT GTB WITH (NEW) Y_PRED ABD ADVERSARIAL LOSS
         result_classifier_i = classifier.fit_classifier(X_train, y_train, sensitive, LAMBDA=LAMBDA, #values
                                                         Xtest=X_test, yt=y_test, sensitivet=sensitivet,
                                                         y_pred=y_pred,
@@ -329,24 +335,20 @@ class AggregateClassifierState(AppState):
         print(f'i {i} Perform AGGREGATE_CLASSIFIER_STATE')
 
         n_estimators = self.load('n_estimators')
-        #for i in range(n_estimators):
-        #print(i)
-        #self.log("[CLIENT] Global computation")
+
         models = self.gather_data()
         #print(f'models {models}')
         data_to_broadcast = []
         global_model = []
-        #print(f'subclassifiers {global_model}')
 
+        # GATHER ALL LOCAL MODELS (TREES)
         for local_model in models:
             global_model.append(local_model)
             #print(f'global_model {global_model}')
         self.store('global_model', global_model)
         #self.log(f'global_model {global_model}')
 
-        #done = self.load('iteration') >= self.load('max_iterations')
-        #data_to_broadcast.append(global_model)
-
+        # SHARE TREES WITH CLIENTS
         self.broadcast_data(global_model) # data_to_broadcast
         self.log(f'[CLIENT] Broadcasting computation data to clients')
 
@@ -367,13 +369,12 @@ class ComputeGlobalModelState(AppState):
         #for i in range(n_estimators):
         self.log('Predicting data...')
 
-        #global_model = self.load('global_model')
+        # RECEIVE TREES
         global_model = self.await_data()
         #self.log(f'global_model {global_model}')
         X_train = self.load('X_train')
         X_test = self.load('X_test')
 
-        # Initialize an empty list to store individual predictions
         individual_predictions_train = []
         individual_predictions_test = []
 
@@ -440,6 +441,7 @@ class UpdateLocalModelState(AppState):
         local_classifier = self.load('local_classifier')
         print(f'local_classifier {local_classifier}')
         LAMBDA = self.load('LAMBDA')
+        # UPDATE CLASSIFIER WITH NEW PREDICTIONS
         result_classifier_i = local_classifier.update_classifier(X_train, y_train, sensitive, LAMBDA=LAMBDA, #values
                                                         Xtest=X_test, yt=y_test, sensitivet=sensitivet,
                                                         y_pred=y_pred,
@@ -450,8 +452,7 @@ class UpdateLocalModelState(AppState):
         self.store('y_pred2', result_classifier_i['y_pred2'])
         self.store('y_pred', result_classifier_i['y_pred'])
         y_pred = self.load('y_pred')
-        # print(f'y_pred {y_pred}')
-        # OUTPUT TO LOG:
+
         score = result_classifier_i['score']
         prule = result_classifier_i['prule']
         #scoret = result_classifier_i['scoret']
@@ -503,6 +504,7 @@ class ComputeLocalAdversarialState(AppState):
         data_to_broadcast = []
         n_estimators = self.load('n_estimators')
 
+        # UPDATE ADVERSARIAL WITH NEW PREDICTIONS
         result_adversarial_i = local_classifier.update_adversial(sess, graph, X_input, y_input, sigm2, var_grad,
                                                         train_steps, y_pred, sensitive, W1, b1, loss, acc)
         updated_weight = result_adversarial_i['W1_updated']
@@ -540,27 +542,22 @@ class AggregateAdversarialState(AppState):
         print(f'i {i} Perform AGGREGATE_ADV_STATE')
 
         n_estimators = self.load('n_estimators')
-        #for i in range(n_estimators):
-        #print(i)
-        #self.log("[CLIENT] Global computation of adversarial weight and biases")
+        # GATHER WEIGHTS AND BIASES
         updated_weight = self.gather_data()
         #print(f'updated_weight, updated_bias {updated_weight}')
         data_to_broadcast = []
-        # global_adversial = []
-        # Extrahiere und aggregiere die ersten Werte (Gewichte)
+
+        # AGGREGATE WEIGHTS AND BIASES
         weights_aggregated = [item[0][0] for item in updated_weight]
         weights_aggregated = np.concatenate(weights_aggregated, axis=0)
 
-        # Extrahiere und aggregiere die zweiten Werte (Versatzwerte)
         biases_aggregated = [item[0][1] for item in updated_weight]
         biases_aggregated = np.concatenate(biases_aggregated, axis=0)
 
-        # Berechne den Mittelwert der aggregierten Gewichte
         mean_weight = np.mean(weights_aggregated)
-
-        # Berechne den Mittelwert der aggregierten Versatzwerte
         mean_bias = np.mean(biases_aggregated)
 
+        # SHARE AGGREGATED WEIGHT AND BIAS
         data_to_broadcast.append([mean_weight, mean_bias])
         #done = self.load('iteration') >= self.load('max_iterations')
         self.broadcast_data(data_to_broadcast)
@@ -649,9 +646,9 @@ class UpdateLocalAdversarialState(AppState):
         #print(f'y_pred {y_pred}')
 
         local_classifier = self.load('local_classifier')
-        #print(type(local_classifier))
 
         n_estimators = self.load('n_estimators')
+        # UPDATE ADVERSARIAL WITH NEW WEIGHT AND BIAS AND CALCULATE NEW LOSS
         result_adversarial_i = local_classifier.update_adv_gradient(sess, graph, X_input, y_input, sigm2, var_grad,
                                                                  train_steps, y_pred, sensitive,
                                                                 W1, b1, new_W, new_b, assign_W1, assign_b1, new_W1, new_b1, loss, acc)
@@ -698,6 +695,7 @@ class WriteState(AppState):
 
         n_estimators = self.load('n_estimators')
 
+        # PREDICTION ON TEST DATA
         sum_pred = local_classifier.predict(X_test, n_estimators) #values
         print(f'y_predt2 {sum_pred}')
         #score = accuracy_score(y_test, sum_pred)
@@ -717,6 +715,7 @@ class WriteState(AppState):
 
         np.savetxt(sys.stdout, np.mean(table[1:, ], axis=0).astype(float), '%5.2f')
 
+        # WRITE RESULTS IN CSV FILE
         with open(f'{OUTPUT_DIR}/' + self.load('result_output'), 'a') as f:
             pd.DataFrame(data={'Accuracy': [Res['Accuracy'] * 100], 'Balanced Accuracy': [Res['Balanced Accuracy'] * 100],
                                'ROC Score': [Res['ROC Score'] * 100], 'Prule': [Res['PRULE']],
@@ -735,6 +734,7 @@ class WriteState(AppState):
         score_balanced_S0_train = balanced_accuracy_score((y_train)[sensitive == 0], np.squeeze(y_pred_S0_train) > 0.5) #values
         print(f'score S0_train {score_S0_train}, score balanced_S0_train {score_balanced_S0_train}')
 
+        # WRITE RESULTS IN CSV FILE
         with open(f'{OUTPUT_DIR}/' + self.load('result_output'), 'a') as f:
             pd.DataFrame(data={'score_S1_train': [score_S1_train], 'score_balanced_S1_train': [score_balanced_S1_train],
                                'score_S0_train': [score_S0_train], 'score_balanced_S0_train': [score_balanced_S0_train]

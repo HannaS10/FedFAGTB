@@ -13,6 +13,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, MaxAbsScaler
 
 
+# FETCH DATA ACCORDING TO V. GRARI AND PERFORM STANDARDIZATION
 def DATA_TRAIN_TEST_adult_compas(num, base_folder):
     if not os.path.exists(base_folder):
         os.makedirs(base_folder)

@@ -105,40 +105,40 @@ def display_results(y_pred, y, sensitive):
             ,'DispFNR': DispFNR(y_pred2, y, sensitive)}
 
 
-def DATA_TRAIN_TEST(num, sens, y, columns_delete):
-    dataset = DATASETS[num]  # Adult data set
-    all_sensitive_attributes = dataset.get_sensitive_attributes_with_joint()
-    ProcessedData(dataset)
-    processed_dataset = ProcessedData(dataset)
-    train_test_splits = processed_dataset.create_train_test_splits(1)
-    train_test_splits.keys()
-    X_train, X_test = train_test_splits['numerical-binsensitive'][0]
-    sensitive = X_train[sens].values
-    sensitivet = X_test[sens].values
-    y_train = X_train[y]
-    y_test = X_test[y]
-
-    scaler = StandardScaler().fit(X_train)
-    s = X_train[sens]
-    st = X_test[sens]
-    t = X_train[y]
-    tt = X_test[y]
-    scale_df = lambda df, scaler: pd.DataFrame(scaler.transform(df), columns=df.columns, index=df.index)
-    X_train = X_train.pipe(scale_df, scaler)
-    X_test = X_test.pipe(scale_df, scaler)
-    X_train = X_train.drop([sens, y], axis=1)
-    X_train[sens] = s
-    X_train[y] = t
-    X_test = X_test.drop([sens, y], axis=1)
-    X_test[sens] = st
-    X_test[y] = tt
-
-    # X_train = X_train.drop(columns_delete,1)
-    X_train = X_train.drop(columns_delete, axis=1)
-    # X_test = X_test.drop(columns_delete,1)
-    X_test = X_test.drop(columns_delete, axis=1)
-
-    return X_train, X_test, y_train, y_test, sensitive, sensitivet
+# def DATA_TRAIN_TEST(num, sens, y, columns_delete):
+#     dataset = DATASETS[num]  # Adult data set
+#     all_sensitive_attributes = dataset.get_sensitive_attributes_with_joint()
+#     ProcessedData(dataset)
+#     processed_dataset = ProcessedData(dataset)
+#     train_test_splits = processed_dataset.create_train_test_splits(1)
+#     train_test_splits.keys()
+#     X_train, X_test = train_test_splits['numerical-binsensitive'][0]
+#     sensitive = X_train[sens].values
+#     sensitivet = X_test[sens].values
+#     y_train = X_train[y]
+#     y_test = X_test[y]
+#
+#     scaler = StandardScaler().fit(X_train)
+#     s = X_train[sens]
+#     st = X_test[sens]
+#     t = X_train[y]
+#     tt = X_test[y]
+#     scale_df = lambda df, scaler: pd.DataFrame(scaler.transform(df), columns=df.columns, index=df.index)
+#     X_train = X_train.pipe(scale_df, scaler)
+#     X_test = X_test.pipe(scale_df, scaler)
+#     X_train = X_train.drop([sens, y], axis=1)
+#     X_train[sens] = s
+#     X_train[y] = t
+#     X_test = X_test.drop([sens, y], axis=1)
+#     X_test[sens] = st
+#     X_test[y] = tt
+#
+#     # X_train = X_train.drop(columns_delete,1)
+#     X_train = X_train.drop(columns_delete, axis=1)
+#     # X_test = X_test.drop(columns_delete,1)
+#     X_test = X_test.drop(columns_delete, axis=1)
+#
+#     return X_train, X_test, y_train, y_test, sensitive, sensitivet
 
 
 def p_rule(y_pred, z_values, threshold=0.5):
@@ -360,7 +360,7 @@ class FAGTB(object):
     def fit_classifier(self, X, y, sensitive, LAMBDA, Xtest, yt, sensitivet, y_pred, y_predt, lfadv, i):
         table = [0, 0]
 
-        t = -np.squeeze(lfadv.T) # (B) Berechnung faire Residuen
+        t = -np.squeeze(lfadv.T) # (B) Berechnung Angreifer Residuen
         proj = 0
         gradient = y - 1 / (1 + np.exp(-y_pred)) - LAMBDA * t - proj #  (A): y - 1 / (1 + np.exp(-y_pred)) (B): t
                                                                     # (C) Ableitung Trainingsverlust
@@ -371,15 +371,13 @@ class FAGTB(object):
 
     def update_classifier(self, X, y, sensitive, LAMBDA, Xtest, yt, sensitivet, y_pred, lfadv, update, i): #y_predt, updatet
         table = [0,0]
-        t = -np.squeeze(lfadv.T)  # (B) Berechnung faire Residuen
+        t = -np.squeeze(lfadv.T)  # (B) Berechnung Angreifer Residuen
         #update = self.trees[i].predict(X) #(F)
-        y_pred += np.multiply(self.learning_rate, update) # (E) oder (F) Aktualisierung Modell
+        y_pred += np.multiply(self.learning_rate, update) # (E) / (F) Aktualisierung Modell
         y_fin = 1 / (1 + np.exp(-y_pred)) # new predicted probabilty
 
-        losstraining = lossgr(y, y_fin) # (A) Residuenberechnung
-        #print(sum(losstraining))
-        lossglobal = losstraining - LAMBDA * t  # (C) Ableitung Trainingsverlust
-        #print(sum(lossglobal))
+        losstraining = lossgr(y, y_fin)
+        lossglobal = losstraining - LAMBDA * t
 
         #Test
         # updatet = self.trees[i].predict(Xtest)

@@ -44,7 +44,9 @@ from sklearn.model_selection import StratifiedKFold
 
             # fold += 1
 
-
+# SPLIT DATA INTO N CLIENTS AND PERFORM K FOLD CROSS VALIDATION
+# INPUT: 1 CSV FILE
+# OUTPUT: k CSV FILES (TRAIN AND TEST) FOR N CLIENTS
 def k_fold_cross_validation_for_clients(input_csv, output_dir, k, num_clients):
     dataset = pd.read_csv(input_csv)
     print(f'lenghh of dataset {len(dataset)}, shape {dataset.shape[1]}')
