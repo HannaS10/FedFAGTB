@@ -19,7 +19,6 @@ from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.metrics import accuracy_score, matthews_corrcoef, roc_auc_score
 from sklearn.preprocessing import StandardScaler
 
-from algo import Coordinator, Client
 from helpfunctions import *
 
 INPUT_DIR = '/mnt/input'
@@ -91,10 +90,10 @@ class InitialState(AppState):
             y_test = X_test[label_column]
 
             # X_train = X_train.drop(columns_delete,1)
-            X_train = X_train.drop(columns_delete, axis=1) #FOR ADULT AND COMPAS(?)
+            X_train = X_train.drop(columns_delete, axis=1)
             X_train = X_train.drop(sens, axis=1)
             # X_test = X_test.drop(columns_delete,1)
-            X_test = X_test.drop(columns_delete, axis=1) #ONLY FOR ADULT
+            X_test = X_test.drop(columns_delete, axis=1)
             X_test = X_test.drop(sens, axis=1)
 
             y_train = np.asarray(y_train)
