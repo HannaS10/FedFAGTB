@@ -1,8 +1,17 @@
-# FeatureCloud App Blank Template
+# FeatureCloud App FAGTB
 
-The app-blank template contains an initial state that does not execute commands other than transitioning to the terminal state.
-This template is a starting point for implementing apps by adding more states and operations.
- 
+FedFAGTB is a gradient tree boosting algorithm that enables fair classification. 
+It is based on the central FAGTB algorithm by V. Grari (https://github.com/vincent-grari/FAGTB/tree/master). 
+The FAGTB algorithm consists of a GTB model with fairness constraint by an attacker A, which tries to infer a predefined sensitive feature from the outputs of the trained model in each training iteration. 
+In the sense of an adversarial training, A is included in the training of the GTB classifier in order to prevent the sensitive property from influencing the model behaviour in the resulting ML model from the outset. 
+In addition, A, implemented by a neural network, is updated in each training iteration, so that the attacker A is always further developed. 
+
+1) run `preprocessing.py` to get appropriate data
+2) run `prepareData.py` to split data into n clients and k folds
+
+`states.py` includes all states and state transitions and performs the FL workflow
+`helpfunctions.py` includes all necessary functions, imported by `states.py`
+
 
 For registering and testing your apps or using other apps, please visit
 [FeatureCloud.ai](https://featurecloud.ai/). And for more information about FeatureCloud architecture,
