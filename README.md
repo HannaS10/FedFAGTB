@@ -9,7 +9,7 @@ In addition, A, implemented by a neural network, is updated in each training ite
 1) run `preprocessing.py` to get appropriate data
 2) run `prepareData.py` to split data into n clients and k folds
 
-`states.py` includes all states and state transitions and performs the FL workflow
+`states.py` includes all states and state transitions and performs the FL workflow,
 `helpfunctions.py` includes all necessary functions, imported by `states.py`
 
 For registering and testing your apps or using other apps, please visit
