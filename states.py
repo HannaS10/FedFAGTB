@@ -683,8 +683,8 @@ class WriteState(AppState):
         local_classifier = self.load('local_classifier')
         print(f'local_classifier {local_classifier}')
 
-        local_model_from_classifier = self.load('local_model_from_classifier')
-        print(f'local_model_from_classifier {local_model_from_classifier}')
+        #local_model_from_classifier = self.load('local_model_from_classifier')
+        #print(f'local_model_from_classifier {local_model_from_classifier}')
 
         X_test = self.load('X_test')
         y_test = self.load('y_test')

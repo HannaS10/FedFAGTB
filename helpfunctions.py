@@ -1,11 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Created on Fri Jul  3 18:08:22 2020
-
-@author: a810en
-"""
-
 import fire
 import os
 import statistics
@@ -53,6 +45,7 @@ import tensorflow.compat.v1 as tf
 from torch.autograd import Variable
 
 
+# CALCULATION P-RULE
 def p_rule(y_pred, z_values, threshold=0.5):
     y_z_1 = y_pred[z_values == 1] > threshold if threshold else y_pred[z_values == 1]
     y_z_0 = y_pred[z_values == 0] > threshold if threshold else y_pred[z_values == 0]
@@ -68,6 +61,7 @@ class Sigmoid():
         return self.__call__(x) * (1 - self.__call__(x))
 
 
+# CALCULATION DispFNR
 def DispFNR(y_pred, y, z_values, threshold=0.5):
     ypred_z_1 = y_pred > threshold if threshold else y_pred[z_values == 1]
     ypred_z_0 = y_pred > threshold if threshold else y_pred[z_values == 0]
@@ -75,6 +69,7 @@ def DispFNR(y_pred, y, z_values, threshold=0.5):
     return result
 
 
+# CALCULATION DispFPR
 def DispFPR(y_pred, y, z_values, threshold=0.5):
     ypred_z_1 = y_pred > threshold if threshold else y_pred[z_values == 1]
     ypred_z_0 = y_pred > threshold if threshold else y_pred[z_values == 0]
@@ -82,6 +77,7 @@ def DispFPR(y_pred, y, z_values, threshold=0.5):
     return result
 
 
+# CALCULATION DI
 def DI(y_pred, z_values, threshold=0.5):
     y_z_1 = y_pred[z_values == 1] > threshold if threshold else y_pred[z_values == 1]
     y_z_0 = y_pred[z_values == 0] > threshold if threshold else y_pred[z_values == 0]
@@ -141,11 +137,11 @@ def display_results(y_pred, y, sensitive):
 #     return X_train, X_test, y_train, y_test, sensitive, sensitivet
 
 
-def p_rule(y_pred, z_values, threshold=0.5):
-    y_z_1 = y_pred[z_values == 1] > threshold if threshold else y_pred[z_values == 1]
-    y_z_0 = y_pred[z_values == 0] > threshold if threshold else y_pred[z_values == 0]
-    odds = y_z_1.mean() / y_z_0.mean()
-    return np.min([odds, 1 / odds]) * 100
+# def p_rule(y_pred, z_values, threshold=0.5):
+#     y_z_1 = y_pred[z_values == 1] > threshold if threshold else y_pred[z_values == 1]
+#     y_z_0 = y_pred[z_values == 0] > threshold if threshold else y_pred[z_values == 0]
+#     odds = y_z_1.mean() / y_z_0.mean()
+#     return np.min([odds, 1 / odds]) * 100
 
 
 def lossgr(y, p):
@@ -170,9 +166,7 @@ class FAGTB(object):
         self.trees = []
         self.clfs = []
         self.lossfunction_adv = []
-        #self.lfadv = []
         self.losstraining = []
-        #self.lossglobal = []
 
         for _ in range(n_estimators):
             tree = DecisionTreeRegressor(criterion='friedman_mse', max_depth=9,
@@ -186,16 +180,17 @@ class FAGTB(object):
             self.clfs.append(clf)
             self.model = []
 
+    # NOT USED
     def fit2(self, X, y, sensitive, LAMBDA):
         clf = LogisticRegression()
         clf._initialize_parameters(sensitive)
-        # print(clf.param)
 
     def gradient(self, y, p):
         # Avoid division by zero
         p = np.clip(p, 1e-15, 1 - 1e-15)
         return - (y / p) + (1 - y) / (1 - p)
 
+    # BUILD GRAPH FOR NN
     def build_graph(self, input_size, seed, learning_rate2):
         graph = tf.Graph()
         with graph.as_default():
@@ -225,11 +220,13 @@ class FAGTB(object):
         return (graph, X_input, y_input, sigm, logit, loss, train_steps, sigm2, pred, acc, init_var, var_grad,
                 W1, b1, assign_W1, assign_b1, new_W1, new_b1)
 
+    # INITIALIZE GRAPH SESSION
     def initialize_session(self, graph, init_var):
         sess = tf.Session(graph=graph)
         sess.run(init_var)
         return sess
 
+    # INITIAL FIT ADVERSARIAL FOR i=0
     def fit_adversial(self, sess, graph, X_input, y_input, sigm2, var_grad, train_steps, y_pred, sensitive, W1, b1, loss, acc, sigm, logit):
         y2 = np.expand_dims(sensitive, axis=1)
         y_pred2 = np.expand_dims(1 / (1 + np.exp(-y_pred)), axis=1)
@@ -237,15 +234,11 @@ class FAGTB(object):
 
         inital_weight = sess.run(W1)
         inital_bias = sess.run(b1)
-        #print(f'inital_weight {inital_weight}')
-        #print(f'inital_bias {inital_bias}')
 
         sess.run(train_steps, feed_dict=train_feed_dict)  # Update the adversarial classifier
 
         first_weight = sess.run(W1)
         first_bias = sess.run(b1)
-        #print(f'first_weight {first_weight}')
-        #print(f'first_bias {first_bias}')
 
         cur_loss = sess.run(loss, feed_dict=train_feed_dict)
         #print(f'cur_loss {cur_loss}')
@@ -265,6 +258,7 @@ class FAGTB(object):
 
         return {'S_ADV': S_ADV, 'gradient_adv': gradient_adv, 'lfadv': lfadv}
 
+    # FIT ADVERSARIAL FOR i>=1 (WITH NEW Y_PRED)
     def update_adversial(self, sess, graph, X_input, y_input, sigm2, var_grad, train_steps, y_pred, sensitive, W1, b1, loss, acc):
         valueofw = sess.run(W1)
         valueofb = sess.run(b1)
@@ -292,6 +286,7 @@ class FAGTB(object):
 
         return {'sess': sess, 'W1_updated': updated_weights, 'b1_updated': updated_bias, 'W1': W1, 'b1': b1}
 
+    # UPDATE ADVERSARIAL AFTER AGGREGATION
     def update_adv_gradient(self, sess, graph, X_input, y_input, sigm2, var_grad, train_steps, y_pred, sensitive, W1, b1, new_W, new_b, assign_W1, assign_b1, new_W1, new_b1, loss, acc):
         valueofw = sess.run(W1)
         valueofb = sess.run(b1)
@@ -336,7 +331,7 @@ class FAGTB(object):
 
         return {'S_ADV': S_ADV, 'gradient_adv': gradient_adv, 'lfadv': lfadv, 'W1': W1, 'b1': b1}
 
-
+    # INITIAL FIT CLASSIFIER FOR i=0
     def fit_initial(self, X, y, sensitive, LAMBDA, Xtest, yt, sensitivet):
         y2 = np.expand_dims(sensitive, axis=1)
 
@@ -352,11 +347,11 @@ class FAGTB(object):
         self.LAMBDA = LAMBDA
         proj = 0
         table = [0, 0]
-        # table = [0, 0, 0, 0]
         y_pred2 = np.expand_dims(1 / (1 + np.exp(-y_pred)), axis=1)
 
-        return {'y_pred2': y_pred2, 'y_pred': y_pred, 'y_predt': y_predt} # 'lfadv': lfadv
+        return {'y_pred2': y_pred2, 'y_pred': y_pred, 'y_predt': y_predt}
 
+    # FIT CLASSIFIER for i >=1 (WITH NEW LFADV)
     def fit_classifier(self, X, y, sensitive, LAMBDA, Xtest, yt, sensitivet, y_pred, y_predt, lfadv, i):
         table = [0, 0]
 
@@ -369,6 +364,7 @@ class FAGTB(object):
 
         return {'local_model': local_model}
 
+    # UPDATE CLASSIFIER AFTER AGGREGATION
     def update_classifier(self, X, y, sensitive, LAMBDA, Xtest, yt, sensitivet, y_pred, lfadv, update, i): #y_predt, updatet
         table = [0,0]
         t = -np.squeeze(lfadv.T)  # (B) Berechnung Angreifer Residuen
@@ -389,7 +385,6 @@ class FAGTB(object):
         prule = p_rule(y_fin, sensitive) / 100
         #prulet = p_rule(y_predt2, sensitivet) / 100
 
-        #if i % 5 == 0:
         print(i, np.sum(lfadv), np.sum(losstraining), np.sum(lossglobal), "Accuracy:", round(accuracy, 4),
                #" test : ", round(accuracyt, 4),
                " Prule Train : ", p_rule(y_fin, sensitive) / 100,
@@ -408,6 +403,7 @@ class FAGTB(object):
                 #'y_predt2': y_predt2, 'y_predt': y_predt
                 }
 
+    # PREDICTION WITH TEST DATA
     def predict(self, X, n_estimators):
         y_pred = np.full(np.shape(X)[0], self.Init, self.Init)
 
@@ -415,7 +411,6 @@ class FAGTB(object):
             update = self.trees[estimator].predict(X)
             y_pred += np.multiply(self.learning_rate, update)
             y_fin = 1 / (1 + np.exp(-y_pred))
-            # Set label to the value that maximizes probability
         return y_fin
 
 tf.disable_v2_behavior()
@@ -465,23 +460,4 @@ class LogisticRegression():
     def param2(self):
         return 2 * self.param
 
-def aggregate_classifier_outputs(classifier_outputs):
-    counter = len(classifier_outputs.shape)
-
-    agg_classifier = []
-    # Convert numpy arrays to lists
-    # classifier_outputs = [list(arr) if isinstance(arr, np.ndarray) else arr for arr in classifier_outputs]
-    if counter > 1:
-        print('classifier_outputs_IF')
-        for element in range(len(classifier_outputs[0].shape)):
-            sum = 0
-            for array in classifier_outputs:
-                sum += array[element]
-            agg_classifier.append((sum / counter))
-    else:
-        print('classifier_outputs_ELSE')
-        agg_classifier = classifier_outputs
-
-    #print(agg_classifier)
-    return agg_classifier
 
